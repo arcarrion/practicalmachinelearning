@@ -18,37 +18,34 @@ library(doParallel)
 
 ## Methodology
 
-- Let's load the data and make a first exploratory analysis.
-
+Let's load the data and make a first exploratory analysis.
 ```{r loading_data}
 training_original<-read.csv(file="./pml-training.csv", header = TRUE, as.is = TRUE)
-testing_original<-read.csv(file="./pml-testing.csv", header = TRUE, as.is = TRUE)
+testing_quiz_original<-read.csv(file="./pml-testing.csv", header = TRUE, as.is = TRUE)
+```
 
+The data set is extensive (thus, not shown here): 19622 samples for the training set, and 20 for the quiz test set, each comprised of 160 variables. 
+```{r explore_dataset, eval=FALSE}
 str(training_original)
 head(training_original,10)
 ```
 
-It seems like the training data has many rows with multiple NA values. Let's calculate the percentage of NA values per column:
+It seems like the data has many columns with multiple NA values. Let's calculate the percentage of NA values per column:
 ```{r na_percentage}
 training_clean<-training_original
 training_clean[training_clean==""]<-NA
 colSums(is.na(training_clean))*100/length(training_clean[,1])
 ```
 
-Two cases can be observed: columns with 0% of NA values, and columns with almost 98% of NA values. Therefore, it seems like imputing data is not going to be a good idea here, thus we proceed to delete the columns with NA values. Besides, we are also to delete some other variables of no interest such us I, user_name, timestamps, and info related to windows.
-
+Two cases can be observed: columns with 0% of NA values, and columns with almost 98% of NA values. Therefore, it seems like imputing data is not going to be a good idea here since there are way more NAs than real values, thus we proceed to delete the columns with NA values. Besides, some other variables of no interest will be deleted such us $I$, $user_name$,and those related timestamps and temporal windows. Lastly, the column $classe$ (the output to predict) will be factored.
 ```{r delete_na_columns}
 valid_columns<-colSums(is.na(training_clean))==0
 training_clean<-training_clean[,valid_columns]
 training_clean<-training_clean[,-which(names(training_clean) %in% c("I","user_name","raw_timestamp_part_1","raw_timestamp_part_2","cvtd_timestamp","new_window","num_window"))]
 training_clean$classe<-factor(training_clean$classe)
-str(training_clean)
 ```
 
-Now there are 19622 samples, with 52 predictors each and the dependent variable to predict, $classe$, which is a factor variable now. Since the number of variables is so high, showing scatter plots is pretty difficult. Just for illustrative reasons, let's plot only some variables
-
-- Let's plot the data in the training set
-
+Now there are 19622 samples, with 52 predictors each and the dependent variable to predict, $classe$, which is a factor variable now. Since the number of variables is so high, showing scatter plots is pretty difficult. Just for illustrative reasons, let's plot only some variables.
 ```{r plot_features}
 featurePlot(x = training_clean[,1:4], 
              y = training_clean$classe, 
@@ -57,7 +54,7 @@ featurePlot(x = training_clean[,1:4],
              auto.key = list(columns = 3))
 ```
 
-The groups are very mixed, so it's difficult to extract any hypothesis on the model. However, clear groups can be spotted at each plot. It may be more obvious correlations with other variables not represented here, but since the nunber is so high, we will not represent the whole set.
+Clear groups can be spotted at each plot, but they seem very mixed, so it's difficult to extract any hypothesis on the model. It may be more obvious correlations with other variables not represented here, but since the nunber is so high, we will not represent the whole set.
 
 Next, let's pre-process the data. First, let's look at any possible near-zero-variance variable in order to delete it, so it does not cause any problem when resampling during cross-validation.
 ```{r testing_nzv}
@@ -74,18 +71,45 @@ training_filtered <- training_clean[,-highlyCorDescr]
 
 comboInfo<-findLinearCombos(training_filtered[,-32])
 comboInfo
-
-processed_clean <- preProcess(training_clean[,-53], 
-                            method = c("center", "scale"))
-training_clean_proc <- predict(processed_clean,training_clean[,-53])
 ```
 
 Several variables have been deleted for being highly correlated, whereas we have found no linear combinations among the remianing variables. Since we would like to not only predict, but also understand which variables have more impact on the prediction, we are not going to apply any other transformation (box-cox, pca, ...).
 
-[Let's see what happens if we center and scale the data ....]
+To test the influence of centering and scaling the data in some of the prediction models, lets create a centered and scaled data set from the original one.
+```{r center_scale}
+processed_clean <- preProcess(training_clean[,-53], 
+                            method = c("center", "scale"))
+training_clean_proc <- training_clean
+training_clean_proc[,1:52]<- predict(processed_clean,training_clean[,-53])
+```
 
-Once the data is pre-processed, let's start to test different models. First, we are going to use one not easily interpretable, but which usually gets the highest accuracy. In order to do so, first we are going to configure the parallel processing as well as the training options for cross-validation using k-fold.
-```{r rf_training_tuning}
+Once the data is pre-processed, let's start to test different models. First, since the quiz test data set has no $classe$ column (i.e., the predicted class) associated with each sample, we need to create a validation set from the training data we have. 
+```{r split_training_validation}
+set.seed(825)
+trainCleanIndex <- createDataPartition(training_clean$classe, p = .8, 
+                                  list = FALSE, 
+                                  times = 1)
+set.seed(825)
+trainFilteredIndex <- createDataPartition(training_filtered$classe, p = .8, 
+                                  list = FALSE, 
+                                  times = 1)
+set.seed(825)
+trainCleanProcIndex <- createDataPartition(training_clean_proc$classe, p = .8, 
+                                  list = FALSE, 
+                                  times = 1)
+
+cleanDataTrain <- training_clean[ trainCleanIndex,]
+cleanDataVal  <- training_clean[-trainCleanIndex,]
+
+filteredDataTrain <- training_filtered[ trainFilteredIndex,]
+filteredDataVal <- training_filtered[ trainFilteredIndex,]
+
+cleanProcDataTrain <- training_clean_proc[ trainCleanProcIndex,]
+cleanProcDataVal <- training_clean_proc[ trainCleanProcIndex,]
+```
+
+Next, we are going to start building a model not easily interpretable, but which usually gets the highest accuracy: a random forest model. In order to do so, parallel processing will be used as well as cross-validation using k-fold, with 10 folds. Ideally, we would like to repeat the k-fold cross-validation several times, but due to computation time constraints, we leave the repetitions set to 1. We are going to apply this model to the three data sets we have generated: with all variables, with no correlated variables, and with centered and scaled variables.
+```{r rf_training_cleanData}
 cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
 registerDoParallel(cluster)
 
@@ -94,152 +118,187 @@ fitControl <- trainControl(method = "repeatedcv",
                            repeats = 1,
                            allowParallel = TRUE)
 set.seed(825)
-system.time(
-  randomForestFit <- train(classe~., method="rf",
-                         data=training_filtered,
-                         trControl = fitControl)
-)
-
+cleanData_time <- system.time(
+  randomForest_cleanDataFit <- train(y=cleanDataTrain$classe, 
+                                     x=cleanDataTrain[,-53], 
+                                     method="rf",
+                                     trControl = fitControl))
 stopCluster(cluster)
 registerDoSEQ()
-randomForestFit$resample
-confusionMatrix.train(randomForestFit)
 ```
 
-We can see that the accuracy in the training set is quite high, next to 94%. The main predictors in order of importance are the following ones:
+```{r rf_training_filteredData}
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
+set.seed(825)
+filteredData_time <- system.time(
+  randomForest_filteredDataFit <- train(y=filteredDataTrain$classe, 
+                                        x=filteredDataTrain[,-32], 
+                                        method="rf",
+                                        trControl = fitControl))
+stopCluster(cluster)
+registerDoSEQ()
+```
+
+```{r rf_training_cleanProcData}
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
+set.seed(825)
+cleanProcData_time <- system.time(
+  randomForest_cleanProcDataFit <- train(y=cleanProcDataTrain$classe, 
+                                         x=cleanProcDataTrain[,-53], 
+                                         method="rf",
+                                         trControl = fitControl))
+stopCluster(cluster)
+registerDoSEQ()
+```
+
+```{r rf_models_comparison}
+confusionMatrix.train(randomForest_cleanDataFit)
+confusionMatrix.train(randomForest_filteredDataFit)
+confusionMatrix.train(randomForest_cleanProcDataFit)
+```
+
+We can see that the accuracy in the training set is quite high, around 99.5% in the three cases. Besides, the time needed to train the model for each data set is as follows:
+```{r time_comparison}
+times<-rbind(allVariables=cleanData_time,noCorrVariables=filteredData_time)
+times<-rbind(times,centeredScaledVariables=cleanProcData_time)
+times
+```
+
+The main predictors in order of importance for each model are the ones represented below:
 ```{r rf_predictors_importance}
-varImp(randomForestFit)
+varImpPlot(randomForest_cleanDataFit$finalModel,type=2)
+varImpPlot(randomForest_filteredDataFit$finalModel,type=2)
+varImpPlot(randomForest_cleanProcDataFit$finalModel,type=2)
 ```
 
-Let's see what happens if using all variables (without filtering out the ones with high correlation):
-```{r rf_training_allvariables}
-cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
-registerDoParallel(cluster)
-
+Since we have a multiclass classification problem, we cannot apply linear regression nor classical logistic regression. So let's try some other methods tan can be applied to this type of problems to see how they compare to the random forest case: regularized discriminant analysis (rda), gradient boosting models (gbm), simple decision trees (30 trees), classical neural networks, and support vector machines. For some cases (neural networks and support vector machines) we applied the models to the data with and without centering and scaling to show the importance of the pre-processing in certain cases.
+```{r tree_training}
 fitControl <- trainControl(method = "repeatedcv",
                            number = 10,
                            repeats = 1,
                            allowParallel = TRUE)
+
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
 set.seed(825)
-system.time(
-  randomForestFitAll <- train(classe~., method="rf",
-                            data=training_clean,
-                            trControl = fitControl)
-)
+treeFitAll <-train(y=cleanDataTrain$classe, 
+                   x=cleanDataTrain[,-53],
+                   method="rpart", tuneLength = 30,
+                   trControl = fitControl)
 stopCluster(cluster)
 registerDoSEQ()
-randomForestFitAll$resample
-confusionMatrix.train(randomForestFitAll)
-varImp(randomForestFitAll)
 ```
 
-Since we have a multiclass classification problem, we cannot apply linear regression nor classical logistic regression. So let's try linear discriminant analysis, multinomial logistic regression, decision trees (with and without bagging), to compare the results of each.
-```{r tree_training}
+```{r gbm_training}
 cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
 registerDoParallel(cluster)
 
-fitControl <- trainControl(method = "repeatedcv",
-                           number = 10,
-                           repeats = 1,
-                           allowParallel = TRUE)
+set.seed(825)
+gbmFitAll <-train(y=cleanDataTrain$classe, 
+                  x=cleanDataTrain[,-53],
+                  method="gbm",
+                  trControl = fitControl,
+                  verbose=FALSE)
+stopCluster(cluster)
+registerDoSEQ()
 ```
 
-```{r}
+```{r rda_training}
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
 
 set.seed(825)
-randomForestFitAllProc <- train(x=training_clean_proc[,-53], y=training_clean$classe, 
-                                method="rf",
-                                data=training_clean_proc,
-                                trControl = fitControl)
+rdaFitAll <- train(y=cleanDataTrain$classe, 
+                  x=cleanDataTrain[,-53], 
+                  method = "rda", tuneLength = 4,
+                  trControl = fitControl)
+stopCluster(cluster)
+registerDoSEQ()
 ```
 
-```{r}
-set.seed(825)
-treeFitAll <-train(classe~., method="rpart",
-             data=training_clean,
-             tuneLength = 30,
-             trControl = fitControl)
-```
+```{r nnet_training_cleanData}
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
 
-```{r}
-#glm only for 2-class classification
-set.seed(825)
-gbmFitAll <-train(classe~., method="gbm",
-             data=training_clean,
-             trControl = fitControl,
-             verbose=FALSE)
-```
-
-```{r}
-set.seed(825)
-rdaFitAll <- train(classe ~ ., data = training_clean, 
-                 method = "rda", 
-                 trControl = fitControl, 
-                 tuneLength = 4)
-```
-
-```{r}
 set.seed(825) 
-nnetFitAll <- train(classe ~ ., data = training_clean,
-                   method = "nnet", 
-                   trControl = fitControl,
-                   trace=FALSE)
+nnetFitAll <- train(y=cleanDataTrain$classe, 
+                    x=cleanDataTrain[,-53],
+                    method = "nnet", 
+                    trControl = fitControl,
+                    trace=FALSE)
+stopCluster(cluster)
+registerDoSEQ()
 ```
 
-```{r}
+```{r nnet_training_cleanProcData}
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
 set.seed(825) 
-nnetFitAllProc <- train(x=training_clean_proc[,-53], y=training_clean$classe,
-                   method = "nnet", 
-                   trControl = fitControl,
-                   trace=FALSE)
+nnetFitAllProc <- train(y=cleanProcDataTrain$classe,
+                        x=cleanProcDataTrain[,-53], 
+                        method = "nnet",
+                        trControl = fitControl,
+                        trace=FALSE)
+stopCluster(cluster)
+registerDoSEQ()
 ```
 
-```{r}
-#stopCluster(cluster)
-#registerDoSEQ()
-treeFitAll$resample
+```{r svm_training_cleanData}
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
+set.seed(825) 
+svmFitAll <- train(y=cleanDataTrain$classe, 
+                       x=cleanDataTrain[,-53],
+                       method = "svmRadial",
+                       trControl=fitControl)
+stopCluster(cluster)
+registerDoSEQ()
+```
+
+```{r svm_training_cleanProcData}
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
+set.seed(825) 
+svmFitAllProc <- train(y=cleanProcDataTrain$classe,
+                       x=cleanProcDataTrain[,-53], 
+                       method = "svmRadial",
+                       trControl=fitControl)
+stopCluster(cluster)
+registerDoSEQ()
+```
+
+```{r confusion_matrix_comparison}
 confusionMatrix.train(treeFitAll)
-treeFitImp<-varImp(treeFitAll)
-plot(treeFitImp, top = 20)
-
-gbmFitAll$resample
 confusionMatrix.train(gbmFitAll)
-gbmFitImp<-varImp(gbmFitAll)
-plot(gbmFitImp, top = 20)
-
-rdaFitAll$resample
 confusionMatrix.train(rdaFitAll)
-rdaFitImp<-varImp(rdaFitAll)
-plot(rdaFitImp, top = 20)
-
-nnetFitAll$resample
 confusionMatrix.train(nnetFitAll)
-nnetFitImp<-varImp(nnetFitAll)
-#plot(nnetFitImp, top = 20, )
-
-nnetFitAllProc$resample
 confusionMatrix.train(nnetFitAllProc)
-nnetFitProcImp<-varImp(nnetFitAllProc)
-#plot(nnetFitProcImp, top = 20)
+confusionMatrix.train(svmFitAll)
+confusionMatrix.train(svmFitAllProc)
 ```
 
-Finally, let's compare the results:
+Finally, let's compare the in error results of all the models in a more straight-forward manner:
 ```{r comparing_models}
-resamps <- resamples(list(RF_FILTERED = randomForestFit,
-                          RF = randomForestFitAll,
-                          RF_PROC = randomForestFitAllProc,
+resamps <- resamples(list(RF = randomForest_cleanDataFit,
+                          RF_FILTERED = randomForest_filteredDataFit,
+                          RF_PROC = randomForest_cleanProcDataFit,
                           GBM = gbmFitAll,
                           TREE = treeFitAll,
                           RDA = rdaFitAll,
                           NN = nnetFitAll,
-                          NN_PROC = nnetFitAllProc))
-resamps
+                          NN_PROC = nnetFitAllProc,
+                          SVM = svmFitAll,
+                          SVM_PROC = svmFitAllProc))
 summary(resamps)
 trellis.par.set(caretTheme())
 dotplot(resamps, metric = "Accuracy")
-
-#multiClassSummary()
-varImpPlot(randomForestFitAll$finalModel,type=2)
-
 ```
 
