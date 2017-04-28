@@ -264,7 +264,7 @@ stopCluster(cluster)
 registerDoSEQ()
 ```
 
-Finally, let's compare the in sample error results of all the models in a more straight-forward manner. In the plot we can observe that random forest models perform better than the rest, followed closely by the gradient boosting model. We can also observe that whereas centering and scaling has not impact in random forest and support vector machine models, it does have a huge impact when fitting neural networks.
+Finally, let's compare the estimated out sample error (using the results from the cross-validation process) of all the models in a more straight-forward manner. In the plot we can observe that random forest models perform better than the rest, followed closely by the gradient boosting model. We can also observe that whereas centering and scaling has not impact in random forest and support vector machine models, it does have a huge impact when fitting neural networks.
 ```{r comparing_models}
 resamps <- resamples(list(RF = randomForest_cleanDataFit,
                           RF_FILTERED = randomForest_filteredDataFit,
@@ -281,7 +281,7 @@ trellis.par.set(caretTheme())
 dotplot(resamps, metric = "Accuracy")
 ```
 
-And also, let's compare the out sample error of all the models. Again, the random forest is the best option, even achieving a higher accuracy than in the training data. 
+And also, let's compare the real out sample error of all the models, using the validation data sets. Again, the random forest is the best option, even achieving a higher accuracy than in the training data. 
 ```{r predict_all_models}
 pred_rf_cleanData <- predict(randomForest_cleanDataFit, newdata=cleanDataVal[,-53])
 pred_rf_filteredData <- predict(randomForest_filteredDataFit, newdata=filteredDataVal[,-32])
