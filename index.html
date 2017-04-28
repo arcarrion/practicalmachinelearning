@@ -247,12 +247,12 @@ colSums(is.na(training_clean))*100/length(training_clean[,1])</code></pre>
 ##                  0.00000                  0.00000                  0.00000 
 ##                   classe 
 ##                  0.00000</code></pre>
-<p>Two cases can be observed: columns with 0% of NA values, and columns with almost 98% of NA values. Therefore, it seems like imputing data is not going to be a good idea here since there are way more NAs than real values, thus we proceed to delete the columns with NA values. Besides, some other variables of no interest will be deleted such us <span class="math inline">\(I\)</span>, <span class="math inline">\(user_name\)</span>,and those related timestamps and temporal windows. Lastly, the column <span class="math inline">\(classe\)</span> (the output to predict) will be factored.</p>
+<p>Two cases can be observed: columns with 0% of NA values, and columns with almost 98% of NA values. Therefore, it seems like imputing data is not going to be a good idea here since there are way more NAs than real values, thus we proceed to delete the columns with NA values. Besides, some other variables of no interest will be deleted such us <span class="math inline">\(I\)</span>, <span class="math inline">\(user\_name\)</span>, and those related to timestamps and temporal windows. Lastly, the column <span class="math inline">\(classe\)</span> (the output to predict) will be factored.</p>
 <pre class="r"><code>valid_columns&lt;-colSums(is.na(training_clean))==0
 training_clean&lt;-training_clean[,valid_columns]
 training_clean&lt;-training_clean[,-which(names(training_clean) %in% c(&quot;I&quot;,&quot;user_name&quot;,&quot;raw_timestamp_part_1&quot;,&quot;raw_timestamp_part_2&quot;,&quot;cvtd_timestamp&quot;,&quot;new_window&quot;,&quot;num_window&quot;))]
 training_clean$classe&lt;-factor(training_clean$classe)</code></pre>
-<p>Now there are 19622 samples, with 52 predictors each and the dependent variable to predict, <span class="math inline">\(classe\)</span>, which is a factor variable now. Since the number of variables is so high, showing scatter plots is pretty difficult. Just for illustrative reasons, let’s plot only some variables.</p>
+<p>Now there are 19622 samples, with 52 predictors each, and the dependent variable to predict, <span class="math inline">\(classe\)</span>, which is a factor variable now. Since the number of variables is so high, showing scatter plots is pretty difficult. Just for illustrative reasons, let’s plot only some variables.</p>
 <pre class="r"><code>featurePlot(x = training_clean[,1:4], 
              y = training_clean$classe, 
              plot = &quot;pairs&quot;,

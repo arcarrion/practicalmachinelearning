@@ -39,7 +39,7 @@ training_clean[training_clean==""]<-NA
 colSums(is.na(training_clean))*100/length(training_clean[,1])
 ```
 
-Two cases can be observed: columns with 0% of NA values, and columns with almost 98% of NA values. Therefore, it seems like imputing data is not going to be a good idea here since there are way more NAs than real values, thus we proceed to delete the columns with NA values. Besides, some other variables of no interest will be deleted such us $I$, $user\_name$,and those related timestamps and temporal windows. Lastly, the column $classe$ (the output to predict) will be factored.
+Two cases can be observed: columns with 0% of NA values, and columns with almost 98% of NA values. Therefore, it seems like imputing data is not going to be a good idea here since there are way more NAs than real values, thus we proceed to delete the columns with NA values. Besides, some other variables of no interest will be deleted such us $I$, $user\_name$, and those related to timestamps and temporal windows. Lastly, the column $classe$ (the output to predict) will be factored.
 ```{r delete_na_columns}
 valid_columns<-colSums(is.na(training_clean))==0
 training_clean<-training_clean[,valid_columns]
@@ -47,7 +47,7 @@ training_clean<-training_clean[,-which(names(training_clean) %in% c("I","user_na
 training_clean$classe<-factor(training_clean$classe)
 ```
 
-Now there are 19622 samples, with 52 predictors each and the dependent variable to predict, $classe$, which is a factor variable now. Since the number of variables is so high, showing scatter plots is pretty difficult. Just for illustrative reasons, let's plot only some variables.
+Now there are 19622 samples, with 52 predictors each, and the dependent variable to predict, $classe$, which is a factor variable now. Since the number of variables is so high, showing scatter plots is pretty difficult. Just for illustrative reasons, let's plot only some variables.
 ```{r plot_features}
 featurePlot(x = training_clean[,1:4], 
              y = training_clean$classe, 
