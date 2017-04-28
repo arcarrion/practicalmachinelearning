@@ -1,0 +1,245 @@
+---
+title: "Practical Machine Learning - Course Project"
+author: "Alicia Rodriguez"
+date: "4/18/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(cache=TRUE)
+library(caret)
+library(pROC)
+library(parallel)
+library(doParallel)
+```
+
+## Executive Summary
+
+## Methodology
+
+- Let's load the data and make a first exploratory analysis.
+
+```{r loading_data}
+training_original<-read.csv(file="./pml-training.csv", header = TRUE, as.is = TRUE)
+testing_original<-read.csv(file="./pml-testing.csv", header = TRUE, as.is = TRUE)
+
+str(training_original)
+head(training_original,10)
+```
+
+It seems like the training data has many rows with multiple NA values. Let's calculate the percentage of NA values per column:
+```{r na_percentage}
+training_clean<-training_original
+training_clean[training_clean==""]<-NA
+colSums(is.na(training_clean))*100/length(training_clean[,1])
+```
+
+Two cases can be observed: columns with 0% of NA values, and columns with almost 98% of NA values. Therefore, it seems like imputing data is not going to be a good idea here, thus we proceed to delete the columns with NA values. Besides, we are also to delete some other variables of no interest such us I, user_name, timestamps, and info related to windows.
+
+```{r delete_na_columns}
+valid_columns<-colSums(is.na(training_clean))==0
+training_clean<-training_clean[,valid_columns]
+training_clean<-training_clean[,-which(names(training_clean) %in% c("I","user_name","raw_timestamp_part_1","raw_timestamp_part_2","cvtd_timestamp","new_window","num_window"))]
+training_clean$classe<-factor(training_clean$classe)
+str(training_clean)
+```
+
+Now there are 19622 samples, with 52 predictors each and the dependent variable to predict, $classe$, which is a factor variable now. Since the number of variables is so high, showing scatter plots is pretty difficult. Just for illustrative reasons, let's plot only some variables
+
+- Let's plot the data in the training set
+
+```{r plot_features}
+featurePlot(x = training_clean[,1:4], 
+             y = training_clean$classe, 
+             plot = "pairs",
+             ## Add a key at the top
+             auto.key = list(columns = 3))
+```
+
+The groups are very mixed, so it's difficult to extract any hypothesis on the model. However, clear groups can be spotted at each plot. It may be more obvious correlations with other variables not represented here, but since the nunber is so high, we will not represent the whole set.
+
+Next, let's pre-process the data. First, let's look at any possible near-zero-variance variable in order to delete it, so it does not cause any problem when resampling during cross-validation.
+```{r testing_nzv}
+nzv <- nearZeroVar(training_clean[,-53], saveMetrics= TRUE)
+nzv[nzv$nzv,]
+```
+
+There are no variables with near-zero-variance. Next, since the number of predictors is so high, let's try to reduce them by looking for high correlations among them, as well as linear combinations.
+```{r find_correlations}
+descrCor <-  cor(training_clean[,-53])
+highlyCorDescr <- findCorrelation(descrCor, cutoff = .75)
+highlyCorDescr
+training_filtered <- training_clean[,-highlyCorDescr]
+
+comboInfo<-findLinearCombos(training_filtered[,-32])
+comboInfo
+
+processed_clean <- preProcess(training_clean[,-53], 
+                            method = c("center", "scale"))
+training_clean_proc <- predict(processed_clean,training_clean[,-53])
+```
+
+Several variables have been deleted for being highly correlated, whereas we have found no linear combinations among the remianing variables. Since we would like to not only predict, but also understand which variables have more impact on the prediction, we are not going to apply any other transformation (box-cox, pca, ...).
+
+[Let's see what happens if we center and scale the data ....]
+
+Once the data is pre-processed, let's start to test different models. First, we are going to use one not easily interpretable, but which usually gets the highest accuracy. In order to do so, first we are going to configure the parallel processing as well as the training options for cross-validation using k-fold.
+```{r rf_training_tuning}
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
+fitControl <- trainControl(method = "repeatedcv",
+                           number = 10,
+                           repeats = 1,
+                           allowParallel = TRUE)
+set.seed(825)
+system.time(
+  randomForestFit <- train(classe~., method="rf",
+                         data=training_filtered,
+                         trControl = fitControl)
+)
+
+stopCluster(cluster)
+registerDoSEQ()
+randomForestFit$resample
+confusionMatrix.train(randomForestFit)
+```
+
+We can see that the accuracy in the training set is quite high, next to 94%. The main predictors in order of importance are the following ones:
+```{r rf_predictors_importance}
+varImp(randomForestFit)
+```
+
+Let's see what happens if using all variables (without filtering out the ones with high correlation):
+```{r rf_training_allvariables}
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
+fitControl <- trainControl(method = "repeatedcv",
+                           number = 10,
+                           repeats = 1,
+                           allowParallel = TRUE)
+set.seed(825)
+system.time(
+  randomForestFitAll <- train(classe~., method="rf",
+                            data=training_clean,
+                            trControl = fitControl)
+)
+stopCluster(cluster)
+registerDoSEQ()
+randomForestFitAll$resample
+confusionMatrix.train(randomForestFitAll)
+varImp(randomForestFitAll)
+```
+
+Since we have a multiclass classification problem, we cannot apply linear regression nor classical logistic regression. So let's try linear discriminant analysis, multinomial logistic regression, decision trees (with and without bagging), to compare the results of each.
+```{r tree_training}
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
+fitControl <- trainControl(method = "repeatedcv",
+                           number = 10,
+                           repeats = 1,
+                           allowParallel = TRUE)
+```
+
+```{r}
+
+set.seed(825)
+randomForestFitAllProc <- train(x=training_clean_proc[,-53], y=training_clean$classe, 
+                                method="rf",
+                                data=training_clean_proc,
+                                trControl = fitControl)
+```
+
+```{r}
+set.seed(825)
+treeFitAll <-train(classe~., method="rpart",
+             data=training_clean,
+             tuneLength = 30,
+             trControl = fitControl)
+```
+
+```{r}
+#glm only for 2-class classification
+set.seed(825)
+gbmFitAll <-train(classe~., method="gbm",
+             data=training_clean,
+             trControl = fitControl,
+             verbose=FALSE)
+```
+
+```{r}
+set.seed(825)
+rdaFitAll <- train(classe ~ ., data = training_clean, 
+                 method = "rda", 
+                 trControl = fitControl, 
+                 tuneLength = 4)
+```
+
+```{r}
+set.seed(825) 
+nnetFitAll <- train(classe ~ ., data = training_clean,
+                   method = "nnet", 
+                   trControl = fitControl,
+                   trace=FALSE)
+```
+
+```{r}
+set.seed(825) 
+nnetFitAllProc <- train(x=training_clean_proc[,-53], y=training_clean$classe,
+                   method = "nnet", 
+                   trControl = fitControl,
+                   trace=FALSE)
+```
+
+```{r}
+#stopCluster(cluster)
+#registerDoSEQ()
+treeFitAll$resample
+confusionMatrix.train(treeFitAll)
+treeFitImp<-varImp(treeFitAll)
+plot(treeFitImp, top = 20)
+
+gbmFitAll$resample
+confusionMatrix.train(gbmFitAll)
+gbmFitImp<-varImp(gbmFitAll)
+plot(gbmFitImp, top = 20)
+
+rdaFitAll$resample
+confusionMatrix.train(rdaFitAll)
+rdaFitImp<-varImp(rdaFitAll)
+plot(rdaFitImp, top = 20)
+
+nnetFitAll$resample
+confusionMatrix.train(nnetFitAll)
+nnetFitImp<-varImp(nnetFitAll)
+#plot(nnetFitImp, top = 20, )
+
+nnetFitAllProc$resample
+confusionMatrix.train(nnetFitAllProc)
+nnetFitProcImp<-varImp(nnetFitAllProc)
+#plot(nnetFitProcImp, top = 20)
+```
+
+Finally, let's compare the results:
+```{r comparing_models}
+resamps <- resamples(list(RF_FILTERED = randomForestFit,
+                          RF = randomForestFitAll,
+                          RF_PROC = randomForestFitAllProc,
+                          GBM = gbmFitAll,
+                          TREE = treeFitAll,
+                          RDA = rdaFitAll,
+                          NN = nnetFitAll,
+                          NN_PROC = nnetFitAllProc))
+resamps
+summary(resamps)
+trellis.par.set(caretTheme())
+dotplot(resamps, metric = "Accuracy")
+
+#multiClassSummary()
+varImpPlot(randomForestFitAll$finalModel,type=2)
+
+```
+
