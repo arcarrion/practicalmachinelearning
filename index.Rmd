@@ -16,6 +16,8 @@ library(doParallel)
 
 ## Executive Summary
 
+This report describes the building of a prediction model for the multiclass classification problem of deciding if a physical exercise is well performed. The predictors available are the signals coming from several sensors placed in different places of the body of the person performing the physical exercise. Several models are fit using cross-validation and different data preprocessing options, checking the in and out sample errors in each case. The model with the highest accuracy is further explored with respect to resulting confusion matrix and variable importance order.  
+
 ## Methodology
 
 Let's load the data and make a first exploratory analysis.
@@ -37,7 +39,7 @@ training_clean[training_clean==""]<-NA
 colSums(is.na(training_clean))*100/length(training_clean[,1])
 ```
 
-Two cases can be observed: columns with 0% of NA values, and columns with almost 98% of NA values. Therefore, it seems like imputing data is not going to be a good idea here since there are way more NAs than real values, thus we proceed to delete the columns with NA values. Besides, some other variables of no interest will be deleted such us $I$, $user_name$,and those related timestamps and temporal windows. Lastly, the column $classe$ (the output to predict) will be factored.
+Two cases can be observed: columns with 0% of NA values, and columns with almost 98% of NA values. Therefore, it seems like imputing data is not going to be a good idea here since there are way more NAs than real values, thus we proceed to delete the columns with NA values. Besides, some other variables of no interest will be deleted such us $I$, $user\_name$,and those related timestamps and temporal windows. Lastly, the column $classe$ (the output to predict) will be factored.
 ```{r delete_na_columns}
 valid_columns<-colSums(is.na(training_clean))==0
 training_clean<-training_clean[,valid_columns]
@@ -83,7 +85,7 @@ training_clean_proc <- training_clean
 training_clean_proc[,1:52]<- predict(processed_clean,training_clean[,-53])
 ```
 
-Once the data is pre-processed, let's start to test different models. First, since the quiz test data set has no $classe$ column (i.e., the predicted class) associated with each sample, we need to create a validation set from the training data we have. 
+Once the data is pre-processed, let's start to test different models. First, since the quiz test data set has no $classe$ column (i.e., the predicted class) associated with each sample, we need to create a validation set from the training data we have in order to calculate the out sample error. 
 ```{r split_training_validation}
 set.seed(825)
 trainCleanIndex <- createDataPartition(training_clean$classe, p = .8, 
@@ -155,27 +157,14 @@ stopCluster(cluster)
 registerDoSEQ()
 ```
 
-```{r rf_models_comparison}
-confusionMatrix.train(randomForest_cleanDataFit)
-confusionMatrix.train(randomForest_filteredDataFit)
-confusionMatrix.train(randomForest_cleanProcDataFit)
-```
-
-We can see that the accuracy in the training set is quite high, around 99.5% in the three cases. Besides, the time needed to train the model for each data set is as follows:
+The time needed to train the model for each data set is shown in the following table. As can be seen, the model with the no correlated variables takes half of the time to process, which can be very interesting in some occasions. This time, since the computer used has enough computing power so as to process the three variants in a reasonable time, we are going to choose the option with highest accuracy.
 ```{r time_comparison}
 times<-rbind(allVariables=cleanData_time,noCorrVariables=filteredData_time)
 times<-rbind(times,centeredScaledVariables=cleanProcData_time)
 times
 ```
 
-The main predictors in order of importance for each model are the ones represented below:
-```{r rf_predictors_importance}
-varImpPlot(randomForest_cleanDataFit$finalModel,type=2)
-varImpPlot(randomForest_filteredDataFit$finalModel,type=2)
-varImpPlot(randomForest_cleanProcDataFit$finalModel,type=2)
-```
-
-Since we have a multiclass classification problem, we cannot apply linear regression nor classical logistic regression. So let's try some other methods tan can be applied to this type of problems to see how they compare to the random forest case: regularized discriminant analysis (rda), gradient boosting models (gbm), simple decision trees (30 trees), classical neural networks, and support vector machines. For some cases (neural networks and support vector machines) we applied the models to the data with and without centering and scaling to show the importance of the pre-processing in certain cases.
+Let's compare the accuracy of the random forest with the three data sets with respect to other models. Since we have a multiclass classification problem, we cannot apply linear regression nor classical logistic regression. So let's try some other methods tan can be applied to this type of problems: regularized discriminant analysis (rda), gradient boosting models (gbm), simple decision trees (with 30 trees), classical neural networks (nn), and support vector machines (svm). For some cases (neural networks and support vector machines) we applied the models to the data with and without centering and scaling to show the importance of the pre-processing in certain cases.
 ```{r tree_training}
 fitControl <- trainControl(method = "repeatedcv",
                            number = 10,
@@ -275,17 +264,7 @@ stopCluster(cluster)
 registerDoSEQ()
 ```
 
-```{r confusion_matrix_comparison}
-confusionMatrix.train(treeFitAll)
-confusionMatrix.train(gbmFitAll)
-confusionMatrix.train(rdaFitAll)
-confusionMatrix.train(nnetFitAll)
-confusionMatrix.train(nnetFitAllProc)
-confusionMatrix.train(svmFitAll)
-confusionMatrix.train(svmFitAllProc)
-```
-
-Finally, let's compare the in error results of all the models in a more straight-forward manner:
+Finally, let's compare the in sample error results of all the models in a more straight-forward manner. In the plot we can observe that random forest models perform better than the rest, followed closely by the gradient boosting model. We can also observe that whereas centering and scaling has not impact in random forest and support vector machine models, it does have a huge impact when fitting neural networks.
 ```{r comparing_models}
 resamps <- resamples(list(RF = randomForest_cleanDataFit,
                           RF_FILTERED = randomForest_filteredDataFit,
@@ -302,3 +281,53 @@ trellis.par.set(caretTheme())
 dotplot(resamps, metric = "Accuracy")
 ```
 
+And also, let's compare the out sample error of all the models. Again, the random forest is the best option, even achieving a higher accuracy than in the training data. 
+```{r predict_all_models}
+pred_rf_cleanData <- predict(randomForest_cleanDataFit, newdata=cleanDataVal[,-53])
+pred_rf_filteredData <- predict(randomForest_filteredDataFit, newdata=filteredDataVal[,-32])
+pred_rf_cleanProcData <- predict(randomForest_cleanProcDataFit, newdata=cleanProcDataVal[,-53])
+pred_gbm_cleanData <- predict(gbmFitAll, newdata=cleanDataVal[,-53])
+pred_tree_cleanData <- predict(treeFitAll, newdata=cleanDataVal[,-53])
+pred_rda_cleanData <- predict(rdaFitAll, newdata=cleanDataVal[,-53])
+pred_nnet_cleanData <- predict(nnetFitAll, newdata=cleanDataVal[,-53])
+pred_nnet_cleanProcData <- predict(nnetFitAllProc, newdata=cleanProcDataVal[,-53])
+pred_svm_cleanData <- predict(svmFitAll, newdata=cleanDataVal[,-53])
+pred_svm_cleanProcData <- predict(svmFitAllProc, newdata=cleanProcDataVal[,-53])
+```
+
+```{r out_error_comparison}
+out_error <- rbind(RF = postResample(pred=pred_rf_cleanData, obs=cleanDataVal$classe), 
+                   RF_FILTERED = postResample(pred=pred_rf_filteredData, obs=filteredDataVal$classe))
+out_error <- rbind(out_error, 
+                   RF_PROC = postResample(pred=pred_rf_cleanProcData, obs=cleanProcDataVal$classe))
+out_error <- rbind(out_error, 
+                   GBM = postResample(pred=pred_gbm_cleanData, obs=cleanDataVal$classe))
+out_error <- rbind(out_error, 
+                   TREE = postResample(pred=pred_tree_cleanData, obs=cleanDataVal$classe))
+out_error <- rbind(out_error, 
+                   RDA = postResample(pred=pred_rda_cleanData, obs=cleanDataVal$classe))
+out_error <- rbind(out_error, 
+                   NN = postResample(pred=pred_nnet_cleanData, obs=cleanDataVal$classe))
+out_error <- rbind(out_error, 
+                   NN_PROC = postResample(pred=pred_nnet_cleanProcData, obs=cleanProcDataVal$classe))
+out_error <- rbind(out_error, 
+                   SVM = postResample(pred=pred_svm_cleanData, obs=cleanDataVal$classe))
+out_error <- rbind(out_error, 
+                   SVM_PROC = postResample(pred=pred_svm_cleanProcData, obs=cleanProcDataVal$classe))
+
+out_error
+```
+
+## Final Model
+
+Since the model with best accuracy (both in the training and validation data) is the random forest when using all the variables preprocessed (centered and scaled), let's take a look at some of their main features, this is, the main information about the model with respect to the cross-validation performed, confusion matrix for the training and validations sets, the evolution of the accuracy depending on the number of selected predictors, and the predictors with the highest importance.
+```{r rf_final_model}
+randomForest_cleanProcDataFit
+confusionMatrix.train(randomForest_cleanProcDataFit)
+confusionMatrix(data=pred_rf_cleanProcData, reference=cleanProcDataVal$classe)
+
+trellis.par.set(caretTheme())
+plot(randomForest_cleanProcDataFit)
+
+varImpPlot(randomForest_cleanProcDataFit$finalModel,type=2)
+```
